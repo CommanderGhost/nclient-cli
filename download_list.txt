@@ -1,6 +1,6 @@
-# Masukkan ID manga atau URL nHentai di bawah ini (satu per baris)
-# Baris kosong atau diawali '#' akan diabaikan
-# Contoh:
+# Enter manga ID or nHentai URL below (one per line)
+# Empty lines or lines starting with '#' will be ignored
+# Example:
 # 123456
 # https://nhentai.net/g/654321/
 173013
