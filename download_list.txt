@@ -1,0 +1,7 @@
+# Masukkan ID manga atau URL nHentai di bawah ini (satu per baris)
+# Baris kosong atau diawali '#' akan diabaikan
+# Contoh:
+# 123456
+# https://nhentai.net/g/654321/
+173013
+99999999

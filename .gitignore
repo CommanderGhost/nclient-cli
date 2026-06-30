@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# User configurations & runtime data
+config.json
+history.json
+failed_downloads.txt
+
+# Download directories
+downloads/
+temp_*/
+
+# OS / IDE
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
