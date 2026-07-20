@@ -11,6 +11,180 @@ from locales import get_txt, load_config, save_config
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("Main")
 
+# ANSI escape codes for styling
+CLR_HEADER = "\033[95m"   # Magenta
+CLR_BLUE = "\033[94m"     # Blue
+CLR_CYAN = "\033[96m"     # Cyan
+CLR_GREEN = "\033[92m"    # Green
+CLR_YELLOW = "\033[93m"   # Yellow
+CLR_RED = "\033[91m"      # Red
+CLR_GRAY = "\033[90m"     # Gray
+CLR_BOLD = "\033[1m"
+CLR_RESET = "\033[0m"
+
+def clear_screen():
+    """Clears the terminal screen in a cross-platform and terminal-resilient manner."""
+    try:
+        if os.name == 'nt':
+            os.system('cls')
+        else:
+            sys.stdout.write("\033[H\033[J")
+            sys.stdout.flush()
+    except Exception:
+        print("\n" * 50)
+
+def read_key():
+    """Reads a single keypress from standard input in a cross-platform manner.
+    Returns:
+        str or None: Key representation ('up', 'down', 'left', 'right', 'enter', 'esc', or char).
+    """
+    if not sys.stdin.isatty():
+        return None
+
+    # Windows implementation
+    try:
+        import msvcrt
+        try:
+            ch = msvcrt.getch()
+        except Exception:
+            return None
+            
+        if not ch:  # EOF or non-blocking read with no key
+            return None
+
+        if ch in (b'\x00', b'\xe0'):  # Arrow key or function key prefix
+            try:
+                ch2 = msvcrt.getch()
+            except Exception:
+                return None
+            if ch2 == b'H':
+                return 'up'
+            elif ch2 == b'P':
+                return 'down'
+            elif ch2 == b'K':
+                return 'left'
+            elif ch2 == b'M':
+                return 'right'
+            return None
+        elif ch in (b'\r', b'\n'):
+            return 'enter'
+        elif ch == b'\x1b':
+            return 'esc'
+        elif ch == b'\x03':  # Ctrl+C
+            raise KeyboardInterrupt()
+        elif ch == b'\x04':  # Ctrl+D
+            raise EOFError()
+        else:
+            try:
+                decoded = ch.decode('utf-8', errors='ignore')
+                return decoded if decoded else None
+            except Exception:
+                return None
+    except ImportError:
+        # UNIX / termios implementation
+        try:
+            import termios
+            import tty
+        except ImportError:
+            return None
+
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        try:
+            tty.setraw(fd)
+            ch = sys.stdin.read(1)
+            if not ch:
+                return None
+            if ch == '\x1b':
+                # Read escape sequence
+                ch2 = sys.stdin.read(2)
+                if ch2 == '[A':
+                    return 'up'
+                elif ch2 == '[B':
+                    return 'down'
+                elif ch2 == '[C':
+                    return 'right'
+                elif ch2 == '[D':
+                    return 'left'
+                return 'esc'
+            elif ch in ('\r', '\n'):
+                return 'enter'
+            elif ch == '\x03':  # Ctrl+C
+                raise KeyboardInterrupt()
+            elif ch == '\x04':  # Ctrl+D
+                raise EOFError()
+            return ch
+        except Exception:
+            return None
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+def interactive_select(title, choices, initial_idx=0, show_help=True):
+    """Renders an interactive selection menu with arrow keys.
+    If stdin is not a TTY or key reading fails, returns None (falls back to traditional prompt).
+    """
+    if not sys.stdin.isatty():
+        return None
+        
+    current_idx = initial_idx
+    num_choices = len(choices)
+    
+    # Hide terminal cursor if possible (ANSI sequence)
+    sys.stdout.write("\033[?25l")
+    sys.stdout.flush()
+    
+    try:
+        while True:
+            # Clear screen using OS-native / fallback call
+            clear_screen()
+            
+            # Print title banner
+            border_len = max(len(title) + 6, 60)
+            sys.stdout.write(f"{CLR_BOLD}{CLR_BLUE}┌" + "─" * (border_len - 2) + "┐\n")
+            # Center the title
+            padded_title = title.center(border_len - 4)
+            sys.stdout.write(f"│ {CLR_CYAN}{CLR_BOLD}{padded_title}{CLR_BLUE} │\n")
+            sys.stdout.write("└" + "─" * (border_len - 2) + f"┘{CLR_RESET}\n\n")
+            
+            # Print choices
+            for idx, choice in enumerate(choices):
+                if idx == current_idx:
+                    sys.stdout.write(f" {CLR_BOLD}{CLR_GREEN}➔  {choice}{CLR_RESET}\n")
+                else:
+                    sys.stdout.write(f"    {CLR_GRAY}{choice}{CLR_RESET}\n")
+            
+            if show_help:
+                sys.stdout.write(f"\n{CLR_GRAY}[Use ↑/↓ or 1-{num_choices} keys, Enter to select]{CLR_RESET}\n")
+            
+            sys.stdout.flush()
+            
+            key = read_key()
+            if key is None:
+                return None
+            elif key == 'up':
+                current_idx = (current_idx - 1) % num_choices
+            elif key == 'down':
+                current_idx = (current_idx + 1) % num_choices
+            elif key == 'enter':
+                clear_screen()
+                return current_idx
+            elif key == 'esc':
+                raise KeyboardInterrupt()
+            elif len(key) == 1 and key.isdigit():
+                val = int(key)
+                if 1 <= val <= num_choices:
+                    clear_screen()
+                    return val - 1
+    except (KeyboardInterrupt, EOFError):
+        # Propagate interrupts
+        raise
+    except Exception:
+        return None
+    finally:
+        # Show terminal cursor again
+        sys.stdout.write("\033[?25h")
+        sys.stdout.flush()
+
 def add_to_history(manga_id, title, file_format, num_pages, file_path):
     """Saves metadata of successfully downloaded manga to history.json."""
     history_file = "history.json"
@@ -206,16 +380,36 @@ def run_manual_download(output_dir="downloads", threads=None, compress=None, com
     existing = check_existing_download(manga_id, output_dir=output_dir)
     if existing:
         print(f"\n" + get_txt('smart_skip_message', manga_id=manga_id, filename=os.path.basename(existing)))
-        choice = input(get_txt('manual_skip_prompt', manga_id=manga_id, filename=os.path.basename(existing))).strip().lower()
-        if choice != 'y':
+        lang = load_config().get("language", "en")
+        yes_txt = {"en": "Yes", "id": "Ya", "zh": "是", "ja": "はい"}.get(lang, "Yes")
+        no_txt = {"en": "No", "id": "Tidak", "zh": "否", "ja": "いいえ"}.get(lang, "No")
+        
+        skip_prompt_title = get_txt('manual_skip_prompt', manga_id=manga_id, filename=os.path.basename(existing)).replace("(y/N):", "").strip()
+        skip_choices = [yes_txt, no_txt]
+        skip_idx = interactive_select(skip_prompt_title, skip_choices)
+        if skip_idx is not None:
+            re_download = (skip_idx == 0)
+        else:
+            choice = input(get_txt('manual_skip_prompt', manga_id=manga_id, filename=os.path.basename(existing))).strip().lower()
+            re_download = (choice == 'y')
+            
+        if not re_download:
             print(get_txt('manual_download_cancelled'))
             return
             
-    print("\n" + get_txt('prompt_format'))
-    print("[1] PDF (default)")
-    print("[2] CBZ")
-    fmt_choice = input(get_txt('prompt_choice') + ": ").strip()
-    file_format = "cbz" if fmt_choice == "2" else "pdf"
+    format_choices = [
+        "PDF (default)",
+        "CBZ"
+    ]
+    fmt_idx = interactive_select(get_txt('prompt_format').upper(), format_choices)
+    if fmt_idx is not None:
+        file_format = "cbz" if fmt_idx == 1 else "pdf"
+    else:
+        print("\n" + get_txt('prompt_format'))
+        print("[1] PDF (default)")
+        print("[2] CBZ")
+        fmt_choice = input(get_txt('prompt_choice') + ": ").strip()
+        file_format = "cbz" if fmt_choice == "2" else "pdf"
     
     print(f"\n" + get_txt('manual_download_starting', manga_id=manga_id))
     try:
@@ -227,16 +421,26 @@ def run_manual_download(output_dir="downloads", threads=None, compress=None, com
 
 def setup_language_selection():
     """Renders the language setup terminal screen and updates configuration."""
-    print("\n================ LANGUAGE SETUP ================")
-    print("Please choose your language / Silakan pilih bahasa Anda:")
-    print("1. English (Default)")
-    print("2. Indonesia")
-    print("3. Chinese (中文)")
-    print("4. Japanese (日本語)")
-    print("=================================================")
-    lang_choice = input("Choice (1-4): ").strip()
-    lang_map = {"1": "en", "2": "id", "3": "zh", "4": "ja"}
-    selected_lang = lang_map.get(lang_choice, "en")
+    lang_choices = [
+        "English (Default)",
+        "Indonesia",
+        "Chinese (中文)",
+        "Japanese (日本語)"
+    ]
+    selected_idx = interactive_select("LANGUAGE SETUP / PILIH BAHASA", lang_choices)
+    if selected_idx is not None:
+        lang_map = {0: "en", 1: "id", 2: "zh", 3: "ja"}
+        selected_lang = lang_map.get(selected_idx, "en")
+    else:
+        # Fallback
+        print("\n================ LANGUAGE SETUP ================")
+        print("Please choose your language / Silakan pilih bahasa Anda:")
+        for idx, lang in enumerate(lang_choices, 1):
+            print(f"{idx}. {lang}")
+        print("=================================================")
+        lang_choice = input("Choice (1-4): ").strip()
+        lang_map = {"1": "en", "2": "id", "3": "zh", "4": "ja"}
+        selected_lang = lang_map.get(lang_choice, "en")
     
     config = load_config()
     config["language"] = selected_lang
@@ -273,13 +477,25 @@ def setup_compress_selection():
     default_quality = config.get("compress_quality", 85)
     
     current_state_str = "ON" if default_compress else "OFF"
-    print(f"\n================ {get_txt('menu_option_compress', state=current_state_str, quality=default_quality).upper()} ================")
     
-    toggle_val = input(get_txt('prompt_compress_toggle')).strip().lower()
-    if not toggle_val:
-        compress = default_compress
+    lang = load_config().get("language", "en")
+    yes_txt = {"en": "Yes", "id": "Ya", "zh": "是", "ja": "はい"}.get(lang, "Yes")
+    no_txt = {"en": "No", "id": "Tidak", "zh": "否", "ja": "いいえ"}.get(lang, "No")
+    
+    compress_title = get_txt('prompt_compress_toggle').replace("(y/N):", "").strip()
+    compress_choices = [yes_txt, no_txt]
+    
+    compress_idx = interactive_select(compress_title, compress_choices)
+    if compress_idx is not None:
+        compress = (compress_idx == 0)
     else:
-        compress = toggle_val == 'y'
+        # Fallback
+        print(f"\n================ {get_txt('menu_option_compress', state=current_state_str, quality=default_quality).upper()} ================")
+        toggle_val = input(get_txt('prompt_compress_toggle')).strip().lower()
+        if not toggle_val:
+            compress = default_compress
+        else:
+            compress = toggle_val == 'y'
         
     quality = default_quality
     if compress:
@@ -304,6 +520,10 @@ def setup_compress_selection():
     print(get_txt('compress_updated', state=state_txt, quality=quality))
 
 def main():
+    try:
+        os.system('')  # Enable VT100 / ANSI escape sequences in Windows Console
+    except Exception:
+        pass
     try:
         sys.stdout.reconfigure(encoding='utf-8')
     except Exception:
@@ -378,29 +598,48 @@ def main():
         current_quality = config.get("compress_quality", 85)
         compress_state_str = "ON" if current_compress else "OFF"
         
-        print(f"\n================ {get_txt('menu_title')} ================")
-        print(f"1. {get_txt('menu_option_batch')}")
-        print(f"2. {get_txt('menu_option_manual')}")
-        print(f"3. {get_txt('menu_option_history')}")
-        print(f"4. {get_txt('menu_option_language')}")
-        print(f"5. {get_txt('menu_option_threads', threads=current_threads)}")
-        print(f"6. {get_txt('menu_option_compress', state=compress_state_str, quality=current_quality)}")
-        print(f"7. {get_txt('menu_option_changelog')}")
-        print(f"8. {get_txt('menu_option_exit')}")
-        print("=====================================================")
-        choice = input(f"{get_txt('prompt_choice')}: ").strip()
+        choices = [
+            get_txt('menu_option_batch'),
+            get_txt('menu_option_manual'),
+            get_txt('menu_option_history'),
+            get_txt('menu_option_language'),
+            get_txt('menu_option_threads', threads=current_threads),
+            get_txt('menu_option_compress', state=compress_state_str, quality=current_quality),
+            get_txt('menu_option_changelog'),
+            get_txt('menu_option_exit')
+        ]
+        
+        selected_idx = interactive_select(get_txt('menu_title').upper(), choices)
+        if selected_idx is not None:
+            choice = str(selected_idx + 1)
+        else:
+            # Fallback to standard text menu
+            print(f"\n================ {get_txt('menu_title')} ================")
+            for idx, ch_text in enumerate(choices, 1):
+                print(f"{idx}. {ch_text}")
+            print("=====================================================")
+            choice = input(f"{get_txt('prompt_choice')}: ").strip()
         
         if choice == "1":
-            print("\n" + get_txt('prompt_format_batch'))
-            print("[1] PDF (default)")
-            print("[2] CBZ")
-            fmt_choice = input(get_txt('prompt_choice') + ": ").strip()
-            file_format = "cbz" if fmt_choice == "2" else "pdf"
+            format_choices = [
+                "PDF (default)",
+                "CBZ"
+            ]
+            fmt_idx = interactive_select(get_txt('prompt_format_batch').upper(), format_choices)
+            if fmt_idx is not None:
+                file_format = "cbz" if fmt_idx == 1 else "pdf"
+            else:
+                print("\n" + get_txt('prompt_format_batch'))
+                print("[1] PDF (default)")
+                print("[2] CBZ")
+                fmt_choice = input(get_txt('prompt_choice') + ": ").strip()
+                file_format = "cbz" if fmt_choice == "2" else "pdf"
             run_batch_download(list_file=list_file, output_dir=output_dir, default_format=file_format, threads=current_threads, compress=current_compress, compress_quality=current_quality)
         elif choice == "2":
             run_manual_download(output_dir=output_dir, threads=current_threads, compress=current_compress, compress_quality=current_quality)
         elif choice == "3":
             view_history()
+            input(f"\n{CLR_GRAY}Press Enter to return to menu...{CLR_RESET}")
         elif choice == "4":
             setup_language_selection()
         elif choice == "5":
@@ -409,11 +648,13 @@ def main():
             setup_compress_selection()
         elif choice == "7":
             view_changelog()
+            input(f"\n{CLR_GRAY}Press Enter to return to menu...{CLR_RESET}")
         elif choice == "8":
             print("\n" + get_txt('goodbye'))
             break
         else:
             print("\n" + get_txt('invalid_choice'))
+            time.sleep(1.5)
 
 if __name__ == "__main__":
     try:
