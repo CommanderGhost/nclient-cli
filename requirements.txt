@@ -3,3 +3,4 @@ requests==2.31.0
 img2pdf==0.5.1
 tqdm==4.66.2
 Pillow>=10.0.0
+rich>=13.0.0

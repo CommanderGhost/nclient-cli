@@ -5,7 +5,7 @@ import shutil
 import logging
 import requests
 import img2pdf
-from tqdm import tqdm
+from rich.progress import Progress, TextColumn, BarColumn, TaskProgressColumn, TimeRemainingColumn, MofNCompleteColumn
 from locales import get_txt
 
 logger = logging.getLogger("Downloader")
@@ -223,7 +223,14 @@ def process_manga_download(manga_id, output_dir="downloads", file_format="pdf", 
                 for img_url, save_path, page_num, compress, compress_quality in tasks
             }
             
-            with tqdm(total=len(pages), initial=initial_count, desc="Downloading", bar_format="{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt}") as pbar:
+            with Progress(
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(bar_width=40, complete_style="green", finished_style="bold green"),
+                TaskProgressColumn(),
+                MofNCompleteColumn(),
+                TimeRemainingColumn()
+            ) as progress:
+                task_id = progress.add_task("[cyan]Downloading", total=len(pages), completed=initial_count)
                 for future in as_completed(future_to_page):
                     img_url, save_path, page_num = future_to_page[future]
                     try:
@@ -231,7 +238,7 @@ def process_manga_download(manga_id, output_dir="downloads", file_format="pdf", 
                         if not success:
                             raise Exception(f"Failed to download page {page_num} after retries from {img_url}.")
                         downloaded_files.append(save_path)
-                        pbar.update(1)
+                        progress.update(task_id, advance=1)
                     except Exception as e:
                         # Cancel other pending futures on error
                         for f in future_to_page:
